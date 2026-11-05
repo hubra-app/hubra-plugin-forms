@@ -27,10 +27,9 @@ member sees the open forms meant for them.
 
 ## Install
 
-Platform admins install it from the plugin catalogue in the manager portal
+Platform admins install it from the Plugin catalogue in manage
 (official Marketplace, <https://plugins.hubra.club/index.json>, signed with
-the Hubra project key). Clubs then switch it on under Einstellungen → Module
-& Plugins.
+the Hubra project key). Clubs then switch it on under Einstellungen → Module.
 
 ## Develop
 
