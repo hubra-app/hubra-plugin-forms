@@ -1,22 +1,21 @@
 import { registerPlugin } from '@hubra/plugin-sdk'
-import { IconNote } from '@tabler/icons-react'
-import { NotesScreen } from './NotesScreen'
+import { IconForms } from '@tabler/icons-react'
+import { BuilderScreen } from './BuilderScreen'
+import { FormScreen } from './FormScreen'
+import { FormsScreen } from './FormsScreen'
+import { ResultsScreen } from './ResultsScreen'
 import translations from './translations.json'
 
-// Everything here shows only while the module is on for the club and the
-// person has `perm`. Other places to add things: `tabs` (a tab on a built-in
-// screen) and `slots` (account.cards, inventory.item, settings.module.actions).
 registerPlugin({
-  id: 'example',
+  id: 'forms',
   routes: [
-    {
-      path: 'example',
-      module: 'example',
-      perm: 'example.notes.read',
-      component: NotesScreen,
-    },
+    { path: 'forms', module: 'forms', component: FormsScreen },
+    { path: 'forms/new', module: 'forms', perm: 'forms.forms.update', component: BuilderScreen },
+    { path: 'forms/:id/edit', module: 'forms', perm: 'forms.forms.update', component: BuilderScreen },
+    { path: 'forms/:id/results', module: 'forms', component: ResultsScreen },
+    { path: 'forms/:id', module: 'forms', component: FormScreen },
   ],
-  // The nav entry in hubra_example/__init__.py names this icon.
-  icons: { note: IconNote },
+  // The nav entry in hubra_forms/__init__.py names this icon.
+  icons: { forms: IconForms },
   translations,
 })
