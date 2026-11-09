@@ -1,7 +1,7 @@
 id: forms
 name: Forms
-version: "1.0.0"
-hubra: ">=0.2,<1"
+version: "1.1.0"
+hubra: ">=0.2.5,<1"
 description: "Forms and surveys: the board builds a form (camp sign-up, kit sizes, a satisfaction survey), members fill it in, and the answers come back as a summary, a table or a CSV."
 author: Hubra
 homepage: https://github.com/hubra-app/hubra-plugin-forms
