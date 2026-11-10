@@ -119,7 +119,12 @@
         "max": "Highest"
       },
       "moreInTable_one": "{{count}} more in the table",
-      "moreInTable_other": "{{count}} more in the table"
+      "moreInTable_other": "{{count}} more in the table",
+      "widget": {
+        "todo": "To fill in",
+        "todoHint": "Open forms you have not filled in yet",
+        "count": "How many"
+      }
     }
   },
   "de-CH": {
@@ -242,7 +247,12 @@
         "max": "Höchster"
       },
       "moreInTable_one": "{{count}} weitere in der Tabelle",
-      "moreInTable_other": "{{count}} weitere in der Tabelle"
+      "moreInTable_other": "{{count}} weitere in der Tabelle",
+      "widget": {
+        "todo": "Auszufüllen",
+        "todoHint": "Offene Formulare, die du noch nicht ausgefüllt hast",
+        "count": "Wie viele"
+      }
     }
   }
 }
