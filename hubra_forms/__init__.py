@@ -15,6 +15,9 @@ from hubra.core.modules import Blueprint, Module, NavItem, Schedule
 
 module = Module(
     code="forms",
+    # Access the standard roles get when a club first switches it on
+    # (docs/roles.md in hubra-app/hubra).
+    role_defaults={"member": "view", "board": "edit", "secretary": "edit"},
     name="Forms",
     description="Forms and surveys members fill in",
     default_enabled=False,
