@@ -11,6 +11,7 @@ Permission:
     forms.forms.update   build forms and see every answer
 """
 
+from hubra.core.contracts import WidgetField, widget_contract
 from hubra.core.modules import Blueprint, Module, NavItem, Schedule
 
 module = Module(
@@ -27,4 +28,16 @@ module = Module(
     tasks=("hubra_forms.tasks",),
     schedule=(Schedule("forms-remind-hourly", "hubra_forms.tasks.remind", 3600.0),),
     tables=("forms_forms", "forms_fields", "forms_responses"),
+    # Dashboard widget (hubra_forms/widgets.py).
+    provides=(
+        widget_contract(
+            "forms.todo",
+            "hubra_forms.widgets:todo",
+            label="forms.widget.todo",
+            description="forms.widget.todoHint",
+            size="m",
+            view="list",
+            fields=(WidgetField("count", "forms.widget.count", "number", 5),),
+        ),
+    ),
 )

@@ -249,3 +249,36 @@ def test_anonymous_copy_and_reminder(app, client, db, club):
     )
     assert client.delete(f"{BASE}/forms/{form['id']}").status_code == 204
     assert db.session.get(FormsForm, form["id"]) is None
+
+
+# ── Dashboard widgets ───────────────────────────────────────────────────────
+
+
+def test_todo_widget(db, club):
+    from hubra.core import contracts
+    from hubra.core.models.member import Member
+    from hubra_forms.models import FormsForm, FormsResponse
+
+    now = datetime.now(timezone.utc)
+    later = FormsForm(title="Trainingslager", status="open", closes_at=now + timedelta(days=9))
+    soon = FormsForm(title="Helfer", status="open", closes_at=now + timedelta(days=2))
+    youth = FormsForm(title="Jugend-Ausflug", status="open", group_id=club["group"])
+    done = FormsForm(title="Schon erledigt", status="open")
+    db.session.add_all([
+        later, soon, youth, done,
+        FormsForm(title="Entwurf", status="draft"),
+        FormsForm(title="Vorbei", status="open", closes_at=now - timedelta(days=1)),
+    ])
+    db.session.flush()
+    db.session.add(FormsResponse(form_id=done.id, member_id=club["max"], answers={}))
+    db.session.commit()
+
+    max_ = db.session.get(Member, club["max"])
+    out = contracts.widget_data("forms.todo", {}, actor=max_)
+    assert [i["label"] for i in out["items"]] == ["Helfer", "Trainingslager", "Jugend-Ausflug"]
+    assert out["items"][0]["path"] == f"/app/forms/{soon.id}"
+    assert out["items"][2]["sub"] is None
+
+    ola = db.session.get(Member, club["ola"])
+    out = contracts.widget_data("forms.todo", {"count": 1}, actor=ola)
+    assert out["total"] == 3 and [i["label"] for i in out["items"]] == ["Helfer"]
