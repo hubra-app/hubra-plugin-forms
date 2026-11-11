@@ -78,7 +78,7 @@ def _form(
         "title": form.title,
         "description": form.description,
         "state": services.state(form),
-        "closesAt": _iso(form.closes_at),
+        "closesAt": _iso(services._aware(form.closes_at)),
         "groupId": form.group_id,
         "groupName": groups.get(form.group_id) if form.group_id else None,
         "anonymous": form.anonymous,
@@ -87,6 +87,7 @@ def _form(
         "answered": form.id in mine,
         "openedAt": _iso(form.opened_at),
         "createdAt": _iso(form.created_at),
+        "answersDeleteAt": _iso(services.delete_answers_at(form)),
     }
     if manage:
         out["responses"] = counts.get(form.id, 0)
@@ -198,17 +199,21 @@ def list_forms():
 # ── Building ─────────────────────────────────────────────────────────────────
 
 
-def _closes_at(data) -> datetime | None:
+def _closes_at(data) -> datetime:
     value = data.get("closesAt")
     if not value:
-        return None
+        # Every form ends, so its answers can be deleted a year later.
+        raise Invalid("closesAt is required")
     try:
         moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         raise Invalid("closesAt must be a time") from None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=_zone())
-    return moment.astimezone(timezone.utc)
+    moment = moment.astimezone(timezone.utc)
+    if moment > services.now() + services.MAX_OPEN:
+        raise Invalid("closesAt is at most a year away")
+    return moment
 
 
 def _zone() -> ZoneInfo:
@@ -241,10 +246,12 @@ def _settings(form: FormsForm, data: dict) -> None:
         raise Invalid("groupId: no such group")
     form.group_id = group_id
     form.anonymous = anonymous
-    form.results_public = _bool(data, "resultsPublic")
+    results_public = _bool(data, "resultsPublic")
+    if results_public and not form.results_public and _has_answers(form):
+        # Members answered on the promise that only the board sees the results.
+        raise Invalid("the results can't be shown to members once there are answers")
+    form.results_public = results_public
     form.remind = _bool(data, "remind")
-    if form.remind and form.closes_at is None:
-        raise Invalid("a reminder needs a closing time")
 
 
 def _clean_field(raw) -> dict:
@@ -360,12 +367,15 @@ def set_status(form_id: int):
         return api_error(
             "FORM_ANSWERED", "a form with answers can't go back to draft", 409
         )
-    if (
-        status == "open"
-        and form.closes_at
-        and services._aware(form.closes_at) <= services.now()
-    ):
+    if status == "open" and form.closes_at is None:
+        raise Invalid("set a closing time first")
+    if status == "open" and services._aware(form.closes_at) <= services.now():
         raise Invalid("the closing time has passed; set a new one first")
+    if status == "closed" and (
+        form.closes_at is None or services._aware(form.closes_at) > services.now()
+    ):
+        # Closed now: the answers are deleted a year from now.
+        form.closes_at = services.now()
     form.status = status
     sent = 0
     if status == "open":

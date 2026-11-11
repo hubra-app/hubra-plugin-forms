@@ -1,5 +1,6 @@
-"""Celery task: remind members a day before a form closes, and delete the
-answers of members who are no longer in the club."""
+"""Celery task: remind members a day before a form closes, and delete
+answers a year after their form closed and those of members who are no
+longer in the club."""
 
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ def remind() -> int:
     from hubra.core.extensions import db
 
     sent = services.remind()
+    services.purge_expired()
     services.purge_orphans()
     db.session.commit()
     return sent

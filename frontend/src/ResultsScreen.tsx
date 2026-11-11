@@ -44,6 +44,11 @@ export function ResultsScreen() {
           ) : undefined
         }
       />
+      {board && f.answersDeleteAt && r.responses > 0 && (
+        <Text size="sm" c="dimmed" mb="sm">
+          {t('forms.answersDeleteAt', { when: formatDateTime(f.answersDeleteAt) })}
+        </Text>
+      )}
       {board && (
         <Group mb="md">
           <Seg

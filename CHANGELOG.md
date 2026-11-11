@@ -5,6 +5,10 @@
 - Security: an anonymous form that has answers can't be switched to named any more (that showed the board who answered what).
 - Security: anonymous results and their CSV no longer show when each answer came in, nor the answers in the order they came, both of which could point to who gave them.
 - Privacy: deleting a form deletes its answers too, and the hourly job deletes the answers of members who are no longer in the club. Club schemas have no cascading foreign keys, so these answers stayed in the database before.
+- Every form needs a closing time, at most a year away. Closing a form by hand sets its closing time to now.
+- Answers are deleted a year after their form closed (the form and its questions stay); the results page says when.
+- "Members see the results" can't be switched on once a form has answers.
+- Notifications follow the members' settings: a new form counts as a poll (`polls`), its reminder as a poll reminder (`poll_reminders`).
 - Changing, copying and exporting a form (CSV) are written to the audit log.
 - A form title with characters outside ASCII no longer breaks the CSV download name.
 

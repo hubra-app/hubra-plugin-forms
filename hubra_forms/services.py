@@ -17,6 +17,10 @@ from .notify import notify
 KINDS = ("text", "textarea", "number", "date", "choice", "multi", "yesno")
 CHOICES = ("choice", "multi")
 REMIND_BEFORE = timedelta(days=1)
+# A form closes at most this far ahead, and its answers are deleted this long
+# after it closed (revDSG: personal data only as long as needed).
+MAX_OPEN = timedelta(days=366)
+KEEP_ANSWERS = timedelta(days=365)
 
 
 class BadAnswer(Exception):
@@ -213,6 +217,41 @@ def delete_form(form: FormsForm) -> None:
     db.session.delete(form)
 
 
+def delete_answers_at(form: FormsForm) -> datetime | None:
+    """When the form's answers are deleted: a year after it closed."""
+    if form.status == "draft":
+        return None
+    closes = _aware(form.closes_at)
+    if closes is None:
+        if form.status != "closed":
+            return None  # open with no end (made before ends were required)
+        closes = _aware(form.opened_at or form.created_at)
+    return closes + KEEP_ANSWERS
+
+
+def purge_expired() -> int:
+    """Deletes the answers of forms that closed more than a year ago; the
+    form and its questions stay."""
+    moment = now()
+    expired = [
+        form.id
+        for form in db.session.scalars(
+            select(FormsForm)
+            .where(FormsForm.status != "draft")
+            .where(FormsForm.id.in_(select(FormsResponse.form_id)))
+        )
+        if (at := delete_answers_at(form)) is not None and at <= moment
+    ]
+    if not expired:
+        return 0
+    return (
+        db.session.execute(
+            delete(FormsResponse).where(FormsResponse.form_id.in_(expired))
+        ).rowcount
+        or 0
+    )
+
+
 def purge_orphans() -> int:
     """Answers of members who are no longer in the club (deleted on request
     or after the retention time), and of forms that are gone. Club schemas
@@ -236,6 +275,7 @@ def announce(form: FormsForm) -> int:
         audience(form),
         lambda de: ("Neues Formular" if de else "New form", title),
         f"/app/forms/{form.id}",
+        topic="polls",
     )
 
 
@@ -268,6 +308,7 @@ def remind() -> int:
                 else ("Form closes tomorrow", title)
             ),
             f"/app/forms/{form.id}",
+            topic="poll_reminders",
         )
         form.reminded_at = moment
     return sent
