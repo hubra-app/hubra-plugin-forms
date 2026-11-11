@@ -206,7 +206,7 @@ def test_build_open_answer_and_results(client, db, club):
 def test_anonymous_copy_and_reminder(app, client, db, club):
     from hubra.core.models.notification import Notification
     from hubra_forms import services
-    from hubra_forms.models import FormsForm
+    from hubra_forms.models import FormsField, FormsForm, FormsResponse
 
     _login(client, "bea@test.ch")
     closes = (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()
@@ -225,12 +225,20 @@ def test_anonymous_copy_and_reminder(app, client, db, club):
 
     _login(client, "bea@test.ch")
     res = client.get(f"{BASE}/forms/{form['id']}/results").get_json()
-    assert res["rows"][0]["name"] is None and "missing" not in res
-    assert (
-        client.get(f"{BASE}/forms/{form['id']}/results.csv")
-        .data.decode("utf-8-sig")
-        .startswith("Beantwortet;")
+    row = res["rows"][0]
+    assert row["name"] is None and row["memberId"] is None and "missing" not in res
+    # Neither the time nor the response's own id can point to who answered.
+    assert row["at"] is None and row["id"] == 1
+    csv = client.get(f"{BASE}/forms/{form['id']}/results.csv")
+    assert csv.data.decode("utf-8-sig").splitlines() == ["Zufrieden?", "Ja"]
+    # Answered anonymously stays anonymous.
+    kept = client.put(
+        f"{BASE}/forms/{form['id']}",
+        json={"title": "Umfrage", "anonymous": False, "fields": form["fields"],
+              "remind": True, "closesAt": closes},
     )
+    assert kept.status_code == 400
+    assert db.session.get(FormsForm, form["id"]).anonymous is True
 
     with app.test_request_context():
         assert services.remind() >= 3  # Bea, Max, Lea (and the seeded admin)
@@ -249,6 +257,33 @@ def test_anonymous_copy_and_reminder(app, client, db, club):
     )
     assert client.delete(f"{BASE}/forms/{form['id']}").status_code == 204
     assert db.session.get(FormsForm, form["id"]) is None
+    # The answers go with the form (club schemas have no cascading keys).
+    assert not db.session.query(FormsResponse).filter_by(form_id=form["id"]).count()
+    assert not db.session.query(FormsField).filter_by(form_id=form["id"]).count()
+
+
+def test_answers_of_deleted_members_are_purged(db, club):
+    from hubra_forms import services
+    from hubra_forms.models import FormsForm, FormsResponse
+
+    if db.engine.dialect.name == "postgresql":
+        pytest.skip("public has the foreign keys a club schema lacks")
+    form = FormsForm(title="Umfrage", status="open")
+    db.session.add(form)
+    db.session.flush()
+    db.session.add_all([
+        FormsResponse(form_id=form.id, member_id=club["max"], answers={}),
+        # A member deleted on request; no foreign key removed the answer.
+        FormsResponse(form_id=form.id, member_id=999_999, answers={"1": "x"}),
+        # A form deleted without its answers.
+        FormsResponse(form_id=999_999, member_id=club["lea"], answers={}),
+    ])
+    db.session.commit()
+
+    assert services.purge_orphans() == 2
+    db.session.commit()
+    left = db.session.query(FormsResponse).all()
+    assert [(r.form_id, r.member_id) for r in left] == [(form.id, club["max"])]
 
 
 # ── Dashboard widgets ───────────────────────────────────────────────────────

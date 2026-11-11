@@ -14,7 +14,8 @@ def _german(member: Member) -> bool:
 
 def notify(member_ids, texts, link: str) -> int:
     """*texts* is a function of ``german: bool`` returning ``(title, message)``.
-    About a member's own money, so it always comes (no topic to turn off)."""
+    A new form or a reminder to answer one, so it always comes (no topic to
+    turn off)."""
     from hubra.core.models.notification import Notification
 
     ids = sorted({m for m in member_ids if m})

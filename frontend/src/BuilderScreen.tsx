@@ -123,7 +123,14 @@ function Builder({
                 />
               </Labelled>
             </SimpleGrid>
-            <Switch checked={anonymous} onChange={(e) => setAnonymous(e.currentTarget.checked)} label={t('forms.anonymous')} description={t('forms.anonymousHint')} />
+            <Switch
+              checked={anonymous}
+              // Answers given anonymously stay anonymous.
+              disabled={!!initial?.anonymous && (initial?.responses ?? 0) > 0}
+              onChange={(e) => setAnonymous(e.currentTarget.checked)}
+              label={t('forms.anonymous')}
+              description={t(initial?.anonymous && (initial?.responses ?? 0) > 0 ? 'forms.anonymousLocked' : 'forms.anonymousHint')}
+            />
             <Switch checked={resultsPublic} onChange={(e) => setResultsPublic(e.currentTarget.checked)} label={t('forms.resultsPublic')} description={t('forms.resultsPublicHint')} />
             <Switch
               checked={remind && !!closesAt}

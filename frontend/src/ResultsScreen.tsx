@@ -83,7 +83,7 @@ export function ResultsScreen() {
                 {r.fields.map((fd) => (
                   <Table.Th key={fd.id}>{fd.label}</Table.Th>
                 ))}
-                <Table.Th>{t('forms.at')}</Table.Th>
+                {!f.anonymous && <Table.Th>{t('forms.at')}</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -103,11 +103,13 @@ export function ResultsScreen() {
                       </Text>
                     </Table.Td>
                   ))}
-                  <Table.Td style={{ whiteSpace: 'nowrap' }}>
-                    <Text size="xs" c="dimmed">
-                      {row.at ? formatDateTime(row.at) : ''}
-                    </Text>
-                  </Table.Td>
+                  {!f.anonymous && (
+                    <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                      <Text size="xs" c="dimmed">
+                        {row.at ? formatDateTime(row.at) : ''}
+                      </Text>
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               ))}
             </Table.Tbody>

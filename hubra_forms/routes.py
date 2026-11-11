@@ -218,7 +218,21 @@ def _zone() -> ZoneInfo:
         return ZoneInfo("Europe/Zurich")
 
 
+def _has_answers(form: FormsForm) -> bool:
+    return (
+        bool(form.id)
+        and db.session.scalar(
+            select(FormsResponse.id).where(FormsResponse.form_id == form.id).limit(1)
+        )
+        is not None
+    )
+
+
 def _settings(form: FormsForm, data: dict) -> None:
+    anonymous = _bool(data, "anonymous")
+    if form.anonymous and not anonymous and _has_answers(form):
+        # Members answered on the promise that nobody sees who said what.
+        raise Invalid("an anonymous form with answers can't stop being anonymous")
     form.title = _text(data, "title", 200, required=True)
     form.description = _text(data, "description", 5000)
     form.closes_at = _closes_at(data)
@@ -226,7 +240,7 @@ def _settings(form: FormsForm, data: dict) -> None:
     if group_id is not None and db.session.get(Group, group_id) is None:
         raise Invalid("groupId: no such group")
     form.group_id = group_id
-    form.anonymous = _bool(data, "anonymous")
+    form.anonymous = anonymous
     form.results_public = _bool(data, "resultsPublic")
     form.remind = _bool(data, "remind")
     if form.remind and form.closes_at is None:
@@ -275,13 +289,7 @@ def _save_fields(form: FormsForm, raw) -> None:
         raise Invalid(f"at most {MAX_FIELDS} fields")
     wanted = [_clean_field(r) for r in raw]
     existing = {f.id: f for f in services.fields(form.id)} if form.id else {}
-    answered = (
-        bool(form.id)
-        and db.session.scalar(
-            select(FormsResponse.id).where(FormsResponse.form_id == form.id).limit(1)
-        )
-        is not None
-    )
+    answered = _has_answers(form)
     keep = set()
     for pos, w in enumerate(wanted):
         f = existing.get(w["id"]) if w["id"] else None
@@ -330,6 +338,7 @@ def update_form(form_id: int):
     if form.reminded_at and form.closes_at and form.closes_at > services.now():
         form.reminded_at = None  # a new closing time gets its own reminder
     _save_fields(form, data.get("fields"))
+    log_audit(member.id, "forms.update", "FormsForm", form.id, form.title)
     db.session.commit()
     return jsonify(_detail(form, member, True))
 
@@ -403,6 +412,7 @@ def copy_form(form_id: int):
                 options=list(f.options) if f.options else None,
             )
         )
+    log_audit(member.id, "forms.copy", "FormsForm", form.id, form.title)
     db.session.commit()
     return jsonify(_detail(form, member, True)), 201
 
@@ -415,7 +425,7 @@ def delete_form(form_id: int):
     if err:
         return err
     log_audit(member.id, "forms.delete", "FormsForm", form.id, form.title)
-    db.session.delete(form)
+    services.delete_form(form)
     db.session.commit()
     return "", 204
 
@@ -504,13 +514,19 @@ def _rows(
                 "id": r.id,
                 "name": None if form.anonymous else names.get(r.member_id, "?"),
                 "memberId": None if form.anonymous else r.member_id,
-                "at": _iso(r.updated_at),
+                "at": None if form.anonymous else _iso(r.updated_at),
                 "answers": {
                     str(f.id): services.text_of(f, r.answers.get(str(f.id)), german)
                     for f in form_fields
                 },
             }
         )
+    if form.anonymous:
+        # The time and order of an answer can tell who gave it (the board
+        # knows who was told first); sort by the answers and number the rows.
+        out.sort(key=lambda row: [row["answers"][str(f.id)] for f in form_fields])
+        for pos, row in enumerate(out, 1):
+            row["id"] = pos
     return out
 
 
@@ -565,16 +581,25 @@ def results_csv(form_id: int):
     rows = _rows(form, form_fields, services.responses(form.id), german)
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    head = [] if form.anonymous else ["Name" if german else "Name"]
-    head.append("Beantwortet" if german else "Answered")
+    # Anonymous forms leave out who answered and when.
+    head = [] if form.anonymous else ["Name", "Beantwortet" if german else "Answered"]
     writer.writerow([_safe(h) for h in head + [f.label for f in form_fields]])
     for r in rows:
-        line = [] if form.anonymous else [r["name"]]
-        line.append((r["at"] or "")[:16].replace("T", " "))
+        line = (
+            []
+            if form.anonymous
+            else [r["name"], (r["at"] or "")[:16].replace("T", " ")]
+        )
         line += [r["answers"][str(f.id)] for f in form_fields]
         writer.writerow([_safe(str(c)) for c in line])
+    log_audit(member.id, "forms.export", "FormsForm", form.id, form.title)
+    db.session.commit()
+    # ASCII only: a header can't carry other characters.
     name = (
-        "".join(c if c.isalnum() else "-" for c in form.title).strip("-")[:60] or "form"
+        "".join(c if c.isascii() and c.isalnum() else "-" for c in form.title).strip(
+            "-"
+        )[:60]
+        or "form"
     )
     return Response(
         "﻿" + buf.getvalue(),

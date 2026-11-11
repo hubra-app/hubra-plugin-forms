@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from hubra.core.extensions import db
 from hubra.core.models.group import GroupMembership
@@ -200,6 +200,33 @@ def text_of(f: FormsField, value, german: bool = True) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
     return str(value)
+
+
+def delete_form(form: FormsForm) -> None:
+    """The form with its fields and every answer.
+
+    Club schemas are cloned without foreign keys, so ON DELETE CASCADE
+    doesn't run there: the answers are deleted here.
+    """
+    db.session.execute(delete(FormsResponse).where(FormsResponse.form_id == form.id))
+    db.session.execute(delete(FormsField).where(FormsField.form_id == form.id))
+    db.session.delete(form)
+
+
+def purge_orphans() -> int:
+    """Answers of members who are no longer in the club (deleted on request
+    or after the retention time), and of forms that are gone. Club schemas
+    have no foreign keys, so nothing else removes them."""
+    gone = db.session.execute(
+        delete(FormsResponse).where(
+            FormsResponse.member_id.not_in(select(Member.id))
+            | FormsResponse.form_id.not_in(select(FormsForm.id))
+        )
+    ).rowcount
+    db.session.execute(
+        delete(FormsField).where(FormsField.form_id.not_in(select(FormsForm.id)))
+    )
+    return gone or 0
 
 
 def announce(form: FormsForm) -> int:
