@@ -109,7 +109,7 @@ function Builder({
             </Labelled>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
               <Labelled label={t('forms.closesAt')} hint={t('forms.closesAtHint')}>
-                <TextInput type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.currentTarget.value)} />
+                <TextInput type="datetime-local" required value={closesAt} onChange={(e) => setClosesAt(e.currentTarget.value)} />
               </Labelled>
               <Labelled label={t('forms.who')}>
                 <Select
@@ -123,8 +123,22 @@ function Builder({
                 />
               </Labelled>
             </SimpleGrid>
-            <Switch checked={anonymous} onChange={(e) => setAnonymous(e.currentTarget.checked)} label={t('forms.anonymous')} description={t('forms.anonymousHint')} />
-            <Switch checked={resultsPublic} onChange={(e) => setResultsPublic(e.currentTarget.checked)} label={t('forms.resultsPublic')} description={t('forms.resultsPublicHint')} />
+            <Switch
+              checked={anonymous}
+              // Answers given anonymously stay anonymous.
+              disabled={!!initial?.anonymous && (initial?.responses ?? 0) > 0}
+              onChange={(e) => setAnonymous(e.currentTarget.checked)}
+              label={t('forms.anonymous')}
+              description={t(initial?.anonymous && (initial?.responses ?? 0) > 0 ? 'forms.anonymousLocked' : 'forms.anonymousHint')}
+            />
+            <Switch
+              checked={resultsPublic}
+              // Members answered on the promise that only the board sees the results.
+              disabled={!initial?.resultsPublic && (initial?.responses ?? 0) > 0}
+              onChange={(e) => setResultsPublic(e.currentTarget.checked)}
+              label={t('forms.resultsPublic')}
+              description={t(!initial?.resultsPublic && (initial?.responses ?? 0) > 0 ? 'forms.resultsPublicLocked' : 'forms.resultsPublicHint')}
+            />
             <Switch
               checked={remind && !!closesAt}
               disabled={!closesAt}

@@ -33,6 +33,7 @@ export interface Form {
   remind: boolean
   answered: boolean
   openedAt: string | null
+  answersDeleteAt: string | null
   createdAt: string | null
   responses?: number
 }

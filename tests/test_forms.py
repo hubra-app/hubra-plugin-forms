@@ -58,8 +58,12 @@ def club(client, app, db, seeded_db):
     return ids
 
 
+def _soon(days: int = 30) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+
 def _make(client, **extra):
-    body = {"title": "Lager 2027", "fields": FIELDS, **extra}
+    body = {"title": "Lager 2027", "fields": FIELDS, "closesAt": _soon(), **extra}
     made = client.post(f"{BASE}/forms", json=body)
     assert made.status_code == 201, made.get_json()
     return made.get_json()
@@ -192,8 +196,32 @@ def test_build_open_answer_and_results(client, db, club):
         == 409
     )
 
-    # Closed: no more answers.
-    client.post(f"{BASE}/forms/{form['id']}/status", json={"status": "closed"})
+    # Results shown to members only if that was so before anyone answered.
+    hidden = _make(client, title="Intern")
+    client.post(f"{BASE}/forms/{hidden['id']}/status", json={"status": "open"})
+    _login(client, "ola@test.ch")
+    fid = {x["label"]: str(x["id"]) for x in hidden["fields"]}
+    client.put(
+        f"{BASE}/forms/{hidden['id']}/response",
+        json={"answers": {fid["Name des Kindes"]: "Ola", fid["T-Shirt"]: "L"}},
+    )
+    _login(client, "bea@test.ch")
+    shown = client.put(
+        f"{BASE}/forms/{hidden['id']}",
+        json={"title": "Intern", "fields": hidden["fields"], "closesAt": _soon(),
+              "resultsPublic": True},
+    )
+    assert shown.status_code == 400
+
+    # Closed: no more answers, and the answers go a year after closing.
+    closed = client.post(
+        f"{BASE}/forms/{form['id']}/status", json={"status": "closed"}
+    ).get_json()
+    closed_at = datetime.fromisoformat(closed["closesAt"])
+    assert closed_at <= datetime.now(timezone.utc)
+    assert datetime.fromisoformat(closed["answersDeleteAt"]) - closed_at == timedelta(
+        days=365
+    )
     _login(client, "max@test.ch")
     assert (
         client.put(
@@ -206,7 +234,7 @@ def test_build_open_answer_and_results(client, db, club):
 def test_anonymous_copy_and_reminder(app, client, db, club):
     from hubra.core.models.notification import Notification
     from hubra_forms import services
-    from hubra_forms.models import FormsForm
+    from hubra_forms.models import FormsField, FormsForm, FormsResponse
 
     _login(client, "bea@test.ch")
     closes = (datetime.now(timezone.utc) + timedelta(hours=10)).isoformat()
@@ -225,12 +253,20 @@ def test_anonymous_copy_and_reminder(app, client, db, club):
 
     _login(client, "bea@test.ch")
     res = client.get(f"{BASE}/forms/{form['id']}/results").get_json()
-    assert res["rows"][0]["name"] is None and "missing" not in res
-    assert (
-        client.get(f"{BASE}/forms/{form['id']}/results.csv")
-        .data.decode("utf-8-sig")
-        .startswith("Beantwortet;")
+    row = res["rows"][0]
+    assert row["name"] is None and row["memberId"] is None and "missing" not in res
+    # Neither the time nor the response's own id can point to who answered.
+    assert row["at"] is None and row["id"] == 1
+    csv = client.get(f"{BASE}/forms/{form['id']}/results.csv")
+    assert csv.data.decode("utf-8-sig").splitlines() == ["Zufrieden?", "Ja"]
+    # Answered anonymously stays anonymous.
+    kept = client.put(
+        f"{BASE}/forms/{form['id']}",
+        json={"title": "Umfrage", "anonymous": False, "fields": form["fields"],
+              "remind": True, "closesAt": closes},
     )
+    assert kept.status_code == 400
+    assert db.session.get(FormsForm, form["id"]).anonymous is True
 
     with app.test_request_context():
         assert services.remind() >= 3  # Bea, Max, Lea (and the seeded admin)
@@ -249,6 +285,76 @@ def test_anonymous_copy_and_reminder(app, client, db, club):
     )
     assert client.delete(f"{BASE}/forms/{form['id']}").status_code == 204
     assert db.session.get(FormsForm, form["id"]) is None
+    # The answers go with the form (club schemas have no cascading keys).
+    assert not db.session.query(FormsResponse).filter_by(form_id=form["id"]).count()
+    assert not db.session.query(FormsField).filter_by(form_id=form["id"]).count()
+
+
+def test_every_form_ends_within_a_year(client, club):
+    _login(client, "bea@test.ch")
+    body = {"title": "x", "fields": FIELDS}
+    assert client.post(f"{BASE}/forms", json=body).status_code == 400
+    far = client.post(f"{BASE}/forms", json={**body, "closesAt": _soon(400)})
+    assert far.status_code == 400
+    assert client.post(f"{BASE}/forms", json={**body, "closesAt": _soon(360)}).status_code == 201
+
+
+def test_answers_go_a_year_after_closing(db, club):
+    from hubra_forms import services
+    from hubra_forms.models import FormsForm, FormsResponse
+
+    now = datetime.now(timezone.utc)
+    old = FormsForm(title="Alt", status="closed", closes_at=now - timedelta(days=366))
+    recent = FormsForm(title="Neu", status="closed", closes_at=now - timedelta(days=200))
+    db.session.add_all([old, recent])
+    db.session.flush()
+    for form in (old, recent):
+        db.session.add(FormsResponse(form_id=form.id, member_id=club["max"], answers={}))
+    db.session.commit()
+
+    assert services.purge_expired() == 1
+    db.session.commit()
+    assert [r.form_id for r in db.session.query(FormsResponse)] == [recent.id]
+    assert db.session.get(FormsForm, old.id) is not None  # the form itself stays
+
+
+def test_announcement_follows_the_members_choice(client, db, club):
+    from hubra.core.models.member import Member
+    from hubra.core.models.notification import Notification
+
+    db.session.get(Member, club["lea"]).notify_prefs = {"polls": {"bell": False}}
+    db.session.commit()
+    _login(client, "bea@test.ch")
+    form = _make(client, groupId=club["group"])
+    client.post(f"{BASE}/forms/{form['id']}/status", json={"status": "open", "announce": True})
+    told = db.session.query(Notification).filter(
+        Notification.link == f"/app/forms/{form['id']}"
+    )
+    assert {n.member_id for n in told} == {club["max"]}
+
+
+def test_answers_of_deleted_members_are_purged(db, club):
+    from hubra_forms import services
+    from hubra_forms.models import FormsForm, FormsResponse
+
+    if db.engine.dialect.name == "postgresql":
+        pytest.skip("public has the foreign keys a club schema lacks")
+    form = FormsForm(title="Umfrage", status="open")
+    db.session.add(form)
+    db.session.flush()
+    db.session.add_all([
+        FormsResponse(form_id=form.id, member_id=club["max"], answers={}),
+        # A member deleted on request; no foreign key removed the answer.
+        FormsResponse(form_id=form.id, member_id=999_999, answers={"1": "x"}),
+        # A form deleted without its answers.
+        FormsResponse(form_id=999_999, member_id=club["lea"], answers={}),
+    ])
+    db.session.commit()
+
+    assert services.purge_orphans() == 2
+    db.session.commit()
+    left = db.session.query(FormsResponse).all()
+    assert [(r.form_id, r.member_id) for r in left] == [(form.id, club["max"])]
 
 
 # ── Dashboard widgets ───────────────────────────────────────────────────────

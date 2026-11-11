@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from hubra.core.extensions import db
 from hubra.core.models.group import GroupMembership
@@ -17,6 +17,10 @@ from .notify import notify
 KINDS = ("text", "textarea", "number", "date", "choice", "multi", "yesno")
 CHOICES = ("choice", "multi")
 REMIND_BEFORE = timedelta(days=1)
+# A form closes at most this far ahead, and its answers are deleted this long
+# after it closed (revDSG: personal data only as long as needed).
+MAX_OPEN = timedelta(days=366)
+KEEP_ANSWERS = timedelta(days=365)
 
 
 class BadAnswer(Exception):
@@ -202,6 +206,68 @@ def text_of(f: FormsField, value, german: bool = True) -> str:
     return str(value)
 
 
+def delete_form(form: FormsForm) -> None:
+    """The form with its fields and every answer.
+
+    Club schemas are cloned without foreign keys, so ON DELETE CASCADE
+    doesn't run there: the answers are deleted here.
+    """
+    db.session.execute(delete(FormsResponse).where(FormsResponse.form_id == form.id))
+    db.session.execute(delete(FormsField).where(FormsField.form_id == form.id))
+    db.session.delete(form)
+
+
+def delete_answers_at(form: FormsForm) -> datetime | None:
+    """When the form's answers are deleted: a year after it closed."""
+    if form.status == "draft":
+        return None
+    closes = _aware(form.closes_at)
+    if closes is None:
+        if form.status != "closed":
+            return None  # open with no end (made before ends were required)
+        closes = _aware(form.opened_at or form.created_at)
+    return closes + KEEP_ANSWERS
+
+
+def purge_expired() -> int:
+    """Deletes the answers of forms that closed more than a year ago; the
+    form and its questions stay."""
+    moment = now()
+    expired = [
+        form.id
+        for form in db.session.scalars(
+            select(FormsForm)
+            .where(FormsForm.status != "draft")
+            .where(FormsForm.id.in_(select(FormsResponse.form_id)))
+        )
+        if (at := delete_answers_at(form)) is not None and at <= moment
+    ]
+    if not expired:
+        return 0
+    return (
+        db.session.execute(
+            delete(FormsResponse).where(FormsResponse.form_id.in_(expired))
+        ).rowcount
+        or 0
+    )
+
+
+def purge_orphans() -> int:
+    """Answers of members who are no longer in the club (deleted on request
+    or after the retention time), and of forms that are gone. Club schemas
+    have no foreign keys, so nothing else removes them."""
+    gone = db.session.execute(
+        delete(FormsResponse).where(
+            FormsResponse.member_id.not_in(select(Member.id))
+            | FormsResponse.form_id.not_in(select(FormsForm.id))
+        )
+    ).rowcount
+    db.session.execute(
+        delete(FormsField).where(FormsField.form_id.not_in(select(FormsForm.id)))
+    )
+    return gone or 0
+
+
 def announce(form: FormsForm) -> int:
     """Tells the form's members it is open."""
     title = form.title[:200]
@@ -209,6 +275,7 @@ def announce(form: FormsForm) -> int:
         audience(form),
         lambda de: ("Neues Formular" if de else "New form", title),
         f"/app/forms/{form.id}",
+        topic="polls",
     )
 
 
@@ -241,6 +308,7 @@ def remind() -> int:
                 else ("Form closes tomorrow", title)
             ),
             f"/app/forms/{form.id}",
+            topic="poll_reminders",
         )
         form.reminded_at = moment
     return sent

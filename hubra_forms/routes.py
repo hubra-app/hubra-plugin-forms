@@ -78,7 +78,7 @@ def _form(
         "title": form.title,
         "description": form.description,
         "state": services.state(form),
-        "closesAt": _iso(form.closes_at),
+        "closesAt": _iso(services._aware(form.closes_at)),
         "groupId": form.group_id,
         "groupName": groups.get(form.group_id) if form.group_id else None,
         "anonymous": form.anonymous,
@@ -87,6 +87,7 @@ def _form(
         "answered": form.id in mine,
         "openedAt": _iso(form.opened_at),
         "createdAt": _iso(form.created_at),
+        "answersDeleteAt": _iso(services.delete_answers_at(form)),
     }
     if manage:
         out["responses"] = counts.get(form.id, 0)
@@ -198,17 +199,21 @@ def list_forms():
 # ── Building ─────────────────────────────────────────────────────────────────
 
 
-def _closes_at(data) -> datetime | None:
+def _closes_at(data) -> datetime:
     value = data.get("closesAt")
     if not value:
-        return None
+        # Every form ends, so its answers can be deleted a year later.
+        raise Invalid("closesAt is required")
     try:
         moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         raise Invalid("closesAt must be a time") from None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=_zone())
-    return moment.astimezone(timezone.utc)
+    moment = moment.astimezone(timezone.utc)
+    if moment > services.now() + services.MAX_OPEN:
+        raise Invalid("closesAt is at most a year away")
+    return moment
 
 
 def _zone() -> ZoneInfo:
@@ -218,7 +223,21 @@ def _zone() -> ZoneInfo:
         return ZoneInfo("Europe/Zurich")
 
 
+def _has_answers(form: FormsForm) -> bool:
+    return (
+        bool(form.id)
+        and db.session.scalar(
+            select(FormsResponse.id).where(FormsResponse.form_id == form.id).limit(1)
+        )
+        is not None
+    )
+
+
 def _settings(form: FormsForm, data: dict) -> None:
+    anonymous = _bool(data, "anonymous")
+    if form.anonymous and not anonymous and _has_answers(form):
+        # Members answered on the promise that nobody sees who said what.
+        raise Invalid("an anonymous form with answers can't stop being anonymous")
     form.title = _text(data, "title", 200, required=True)
     form.description = _text(data, "description", 5000)
     form.closes_at = _closes_at(data)
@@ -226,11 +245,13 @@ def _settings(form: FormsForm, data: dict) -> None:
     if group_id is not None and db.session.get(Group, group_id) is None:
         raise Invalid("groupId: no such group")
     form.group_id = group_id
-    form.anonymous = _bool(data, "anonymous")
-    form.results_public = _bool(data, "resultsPublic")
+    form.anonymous = anonymous
+    results_public = _bool(data, "resultsPublic")
+    if results_public and not form.results_public and _has_answers(form):
+        # Members answered on the promise that only the board sees the results.
+        raise Invalid("the results can't be shown to members once there are answers")
+    form.results_public = results_public
     form.remind = _bool(data, "remind")
-    if form.remind and form.closes_at is None:
-        raise Invalid("a reminder needs a closing time")
 
 
 def _clean_field(raw) -> dict:
@@ -275,13 +296,7 @@ def _save_fields(form: FormsForm, raw) -> None:
         raise Invalid(f"at most {MAX_FIELDS} fields")
     wanted = [_clean_field(r) for r in raw]
     existing = {f.id: f for f in services.fields(form.id)} if form.id else {}
-    answered = (
-        bool(form.id)
-        and db.session.scalar(
-            select(FormsResponse.id).where(FormsResponse.form_id == form.id).limit(1)
-        )
-        is not None
-    )
+    answered = _has_answers(form)
     keep = set()
     for pos, w in enumerate(wanted):
         f = existing.get(w["id"]) if w["id"] else None
@@ -330,6 +345,7 @@ def update_form(form_id: int):
     if form.reminded_at and form.closes_at and form.closes_at > services.now():
         form.reminded_at = None  # a new closing time gets its own reminder
     _save_fields(form, data.get("fields"))
+    log_audit(member.id, "forms.update", "FormsForm", form.id, form.title)
     db.session.commit()
     return jsonify(_detail(form, member, True))
 
@@ -351,12 +367,15 @@ def set_status(form_id: int):
         return api_error(
             "FORM_ANSWERED", "a form with answers can't go back to draft", 409
         )
-    if (
-        status == "open"
-        and form.closes_at
-        and services._aware(form.closes_at) <= services.now()
-    ):
+    if status == "open" and form.closes_at is None:
+        raise Invalid("set a closing time first")
+    if status == "open" and services._aware(form.closes_at) <= services.now():
         raise Invalid("the closing time has passed; set a new one first")
+    if status == "closed" and (
+        form.closes_at is None or services._aware(form.closes_at) > services.now()
+    ):
+        # Closed now: the answers are deleted a year from now.
+        form.closes_at = services.now()
     form.status = status
     sent = 0
     if status == "open":
@@ -403,6 +422,7 @@ def copy_form(form_id: int):
                 options=list(f.options) if f.options else None,
             )
         )
+    log_audit(member.id, "forms.copy", "FormsForm", form.id, form.title)
     db.session.commit()
     return jsonify(_detail(form, member, True)), 201
 
@@ -415,7 +435,7 @@ def delete_form(form_id: int):
     if err:
         return err
     log_audit(member.id, "forms.delete", "FormsForm", form.id, form.title)
-    db.session.delete(form)
+    services.delete_form(form)
     db.session.commit()
     return "", 204
 
@@ -504,13 +524,19 @@ def _rows(
                 "id": r.id,
                 "name": None if form.anonymous else names.get(r.member_id, "?"),
                 "memberId": None if form.anonymous else r.member_id,
-                "at": _iso(r.updated_at),
+                "at": None if form.anonymous else _iso(r.updated_at),
                 "answers": {
                     str(f.id): services.text_of(f, r.answers.get(str(f.id)), german)
                     for f in form_fields
                 },
             }
         )
+    if form.anonymous:
+        # The time and order of an answer can tell who gave it (the board
+        # knows who was told first); sort by the answers and number the rows.
+        out.sort(key=lambda row: [row["answers"][str(f.id)] for f in form_fields])
+        for pos, row in enumerate(out, 1):
+            row["id"] = pos
     return out
 
 
@@ -565,16 +591,25 @@ def results_csv(form_id: int):
     rows = _rows(form, form_fields, services.responses(form.id), german)
     buf = io.StringIO()
     writer = csv.writer(buf, delimiter=";")
-    head = [] if form.anonymous else ["Name" if german else "Name"]
-    head.append("Beantwortet" if german else "Answered")
+    # Anonymous forms leave out who answered and when.
+    head = [] if form.anonymous else ["Name", "Beantwortet" if german else "Answered"]
     writer.writerow([_safe(h) for h in head + [f.label for f in form_fields]])
     for r in rows:
-        line = [] if form.anonymous else [r["name"]]
-        line.append((r["at"] or "")[:16].replace("T", " "))
+        line = (
+            []
+            if form.anonymous
+            else [r["name"], (r["at"] or "")[:16].replace("T", " ")]
+        )
         line += [r["answers"][str(f.id)] for f in form_fields]
         writer.writerow([_safe(str(c)) for c in line])
+    log_audit(member.id, "forms.export", "FormsForm", form.id, form.title)
+    db.session.commit()
+    # ASCII only: a header can't carry other characters.
     name = (
-        "".join(c if c.isalnum() else "-" for c in form.title).strip("-")[:60] or "form"
+        "".join(c if c.isascii() and c.isalnum() else "-" for c in form.title).strip(
+            "-"
+        )[:60]
+        or "form"
     )
     return Response(
         "﻿" + buf.getvalue(),
