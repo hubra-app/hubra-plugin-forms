@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ActionIcon, Anchor, Button, Group, Paper, Select, SimpleGrid, Stack, Switch, TagsInput, Text, TextInput, Textarea, Tooltip } from '@mantine/core'
 import { IconArrowDown, IconArrowLeft, IconArrowUp, IconCopy, IconPlus, IconTrash } from '@tabler/icons-react'
-import { ErrorBanner, Field as Labelled, LoadingSpinner, PageHead, useT } from '@hubra/plugin-sdk'
+import { DateTimeField, ErrorBanner, Field as Labelled, LoadingSpinner, PageHead, useT } from '@hubra/plugin-sdk'
 import { KINDS, QK, errorText, fromLocalInput, getForm, getOptions, saveForm, toLocalInput, type Field, type Kind } from './api'
 import { useAction } from './common'
 
@@ -109,7 +109,7 @@ function Builder({
             </Labelled>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
               <Labelled label={t('forms.closesAt')} hint={t('forms.closesAtHint')}>
-                <TextInput type="datetime-local" required value={closesAt} onChange={(e) => setClosesAt(e.currentTarget.value)} />
+                <DateTimeField required value={closesAt} onChange={setClosesAt} />
               </Labelled>
               <Labelled label={t('forms.who')}>
                 <Select

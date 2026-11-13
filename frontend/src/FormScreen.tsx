@@ -19,7 +19,7 @@ import {
   Textarea,
 } from '@mantine/core'
 import { IconArrowLeft, IconChartBar, IconCircleCheck, IconCopy, IconDots, IconLock, IconLockOpen, IconPencil, IconTrash } from '@tabler/icons-react'
-import { ConfirmModal, ErrorBanner, LoadingSpinner, PageHead, formatDateTime, useT, useToast } from '@hubra/plugin-sdk'
+import { ConfirmModal, DateField, ErrorBanner, formatDateTime, LoadingSpinner, PageHead, useT, useToast } from '@hubra/plugin-sdk'
 import { FieldError, QK, answer, copyForm, deleteForm, errorText, getForm, setStatus, withdraw, type Field, type FormDetail, type Value } from './api'
 import { StateBadge, closesText, useAction } from './common'
 
@@ -288,7 +288,7 @@ function FieldInput({
         />
       )
     case 'date':
-      return <TextInput {...common} type="date" value={(value as string) ?? ''} onChange={(e) => onChange(e.currentTarget.value)} maw={240} />
+      return <DateField {...common} value={(value as string) ?? ''} onChange={onChange} maw={240} />
     case 'choice':
       return (
         <Radio.Group {...common} value={(value as string) ?? null} onChange={onChange}>
