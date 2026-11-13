@@ -4,7 +4,7 @@
 
 A plugin for [Hubra](https://hubra.club). Forms and surveys: the board builds a form (camp sign-up, kit sizes, a satisfaction survey), members fill it in, and the answers come back as a summary, a table or a CSV.
 
-**Version** 1.0.0 · **Works with** Hubra >=0.2,<1 · **Plugin id** `forms` · **Needs** the members module
+**Version** 1.2.0 · **Works with** Hubra >=0.2.5,<1 · **Plugin id** `forms` · **Needs** the members module
 
 ![A form](docs/screenshots/form.png)
 

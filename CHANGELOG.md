@@ -1,6 +1,6 @@
 # Forms
 
-## Unreleased
+## 1.2.0
 
 - Security: an anonymous form that has answers can't be switched to named any more (that showed the board who answered what).
 - Security: anonymous results and their CSV no longer show when each answer came in, nor the answers in the order they came, both of which could point to who gave them.
