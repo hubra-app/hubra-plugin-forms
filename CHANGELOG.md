@@ -1,5 +1,9 @@
 # Forms
 
+## Unreleased
+
+- Date, date-and-time and time fields use Hubra's date pickers: dd.mm.yyyy, a calendar that starts on Monday and 24-hour times, whatever the browser language; typed dates like 1.2.26 work too. Needs Hubra 0.2.6 or later.
+
 ## 1.2.0
 
 - Security: an anonymous form that has answers can't be switched to named any more (that showed the board who answered what).
